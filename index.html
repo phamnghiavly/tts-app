@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>App Đọc Văn Bản</title>
+  <style>
+    :root {
+      --primary: #007aff;
+      --danger: #ff3b30;
+      --bg: #f2f2f7;
+      --card: #ffffff;
+      --text: #1c1c1e;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+    h2 {
+      text-align: center;
+      margin: 8px 0 16px;
+      font-size: 22px;
+    }
+    .card {
+      background: var(--card);
+      padding: 16px;
+      border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      flex: 1;
+    }
+    textarea {
+      width: 100%;
+      height: 140px;
+      padding: 12px;
+      border: 1px solid #e5e5ea;
+      border-radius: 12px;
+      font-size: 16px;
+      resize: none;
+      box-sizing: border-box;
+      outline: none;
+    }
+    textarea:focus {
+      border-color: var(--primary);
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .row {
+      display: flex;
+      gap: 12px;
+    }
+    .row .control-group {
+      flex: 1;
+    }
+    label {
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      justify-content: space-between;
+    }
+    select, input[type="range"] {
+      width: 100%;
+      padding: 10px;
+      font-size: 15px;
+      border-radius: 10px;
+      border: 1px solid #e5e5ea;
+      background: var(--bg);
+      outline: none;
+      box-sizing: border-box;
+    }
+    input[type="range"] {
+      padding: 0;
+      height: 30px;
+    }
+    .status-badge {
+      text-align: center;
+      font-size: 13px;
+      color: #666;
+      min-height: 18px;
+    }
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-top: auto;
+    }
+    button {
+      flex: 1;
+      padding: 15px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      color: white;
+    }
+    button:active {
+      opacity: 0.7;
+    }
+    #speak-btn {
+      background-color: var(--primary);
+    }
+    #stop-btn {
+      background-color: var(--danger);
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Trợ lý Đọc Văn Bản</h2>
+
+  <div class="card">
+    <textarea id="text-input" placeholder="Nhập hoặc dán văn bản cần đọc vào đây..."></textarea>
+
+    <div class="control-group">
+      <label>Giọng đọc:</label>
+      <select id="voice-select"></select>
+    </div>
+
+    <div class="row">
+      <div class="control-group">
+        <label>Tốc độ: <span id="rate-value">1x</span></label>
+        <input type="range" id="rate" min="0.5" max="2" value="1" step="0.1" />
+      </div>
+
+      <div class="control-group">
+        <label>Lặp lại:</label>
+        <select id="loop-select">
+          <option value="1">1 lần (Không lặp)</option>
+          <option value="2">2 lần</option>
+          <option value="3">3 lần</option>
+          <option value="5">5 lần</option>
+          <option value="Infinity">Lặp vô hạn (∞)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="status-badge" id="status-text">Sẵn sàng</div>
+
+    <div class="button-group">
+      <button id="speak-btn">ĐỌC</button>
+      <button id="stop-btn">DỪNG</button>
+    </div>
+  </div>
+
+  <script>
+    const synth = window.speechSynthesis;
+    const textInput = document.getElementById("text-input");
+    const voiceSelect = document.getElementById("voice-select");
+    const rateInput = document.getElementById("rate");
+    const rateValue = document.getElementById("rate-value");
+    const loopSelect = document.getElementById("loop-select");
+    const statusText = document.getElementById("status-text");
+    const speakBtn = document.getElementById("speak-btn");
+    const stopBtn = document.getElementById("stop-btn");
+
+    let voices = [];
+    let isSpeaking = false;
+    let currentIteration = 0;
+    let totalIterations = 1;
+    let wakeLock = null;
+
+    // Yêu cầu giữ màn hình luôn sáng khi đang đọc (Wake Lock API)
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.log("Wake Lock không được hỗ trợ hoặc bị từ chối.");
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock !== null) {
+        wakeLock.release();
+        wakeLock = null;
+      }
+    }
+
+    function populateVoiceList() {
+      voices = synth.getVoices();
+      voiceSelect.innerHTML = "";
+      voices.forEach((voice, index) => {
+        const option = document.createElement("option");
+        option.textContent = `${voice.name} (${voice.lang})`;
+        option.value = index;
+        if (voice.lang.includes("vi")) {
+          option.selected = true;
+        }
+        voiceSelect.appendChild(option);
+      });
+    }
+
+    populateVoiceList();
+    if (speechSynthesis.onvoiceschanged !== undefined) {
+      speechSynthesis.onvoiceschanged = populateVoiceList;
+    }
+
+    function startSpeaking() {
+      const text = textInput.value.trim();
+      if (!text) return;
+
+      synth.cancel();
+      isSpeaking = true;
+      currentIteration = 1;
+      totalIterations = loopSelect.value === "Infinity" ? Infinity : parseInt(loopSelect.value);
+      
+      requestWakeLock();
+      playLoop(text);
+    }
+
+    function playLoop(text) {
+      if (!isSpeaking) return;
+
+      const loopDisplay = totalIterations === Infinity ? "∞" : totalIterations;
+      statusText.textContent = `Đang đọc (Lần ${currentIteration}/${loopDisplay})...`;
+
+      const utterThis = new SpeechSynthesisUtterance(text);
+      utterThis.voice = voices[voiceSelect.value];
+      utterThis.rate = parseFloat(rateInput.value);
+
+      utterThis.onend = () => {
+        if (!isSpeaking) return;
+
+        if (currentIteration < totalIterations) {
+          currentIteration++;
+          // Nghỉ 600ms giữa các lần lặp cho tự nhiên
+          setTimeout(() => playLoop(text), 600);
+        } else {
+          stopSpeaking();
+          statusText.textContent = "Đã hoàn thành.";
+        }
+      };
+
+      utterThis.onerror = (e) => {
+        console.error("Lỗi đọc:", e);
+        stopSpeaking();
+      };
+
+      synth.speak(utterThis);
+    }
+
+    function stopSpeaking() {
+      isSpeaking = false;
+      synth.cancel();
+      releaseWakeLock();
+      statusText.textContent = "Đã dừng.";
+    }
+
+    speakBtn.addEventListener("click", startSpeaking);
+    stopBtn.addEventListener("click", stopSpeaking);
+
+    // Thay đổi tức thì khi đổi giọng
+    voiceSelect.addEventListener("change", () => {
+      if (isSpeaking) {
+        synth.cancel();
+        playLoop(textInput.value.trim());
+      }
+    });
+
+    // Thay đổi tức thì khi kéo tốc độ
+    rateInput.addEventListener("input", () => {
+      rateValue.textContent = rateInput.value + "x";
+      if (isSpeaking) {
+        synth.cancel();
+        playLoop(textInput.value.trim());
+      }
+    });
+
+    // Cập nhật số lần lặp trực tiếp nếu đổi lựa chọn
+    loopSelect.addEventListener("change", () => {
+      totalIterations = loopSelect.value === "Infinity" ? Infinity : parseInt(loopSelect.value);
+      if (isSpeaking) {
+        const loopDisplay = totalIterations === Infinity ? "∞" : totalIterations;
+        statusText.textContent = `Đang đọc (Lần ${currentIteration}/${loopDisplay})...`;
+      }
+    });
+  </script>
+</body>
+</html>
